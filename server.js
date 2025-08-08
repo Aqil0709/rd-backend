@@ -50,19 +50,20 @@ const allowedOrigins = [process.env.FRONTEND_URL || 'http://localhost:3000'];
 
 const corsOptions = {
     origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps or curl requests)
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) === -1) {
+        // THIS IS THE DEBUGGING LINE TO ADD
+        console.log('--- INCOMING REQUEST ORIGIN:', origin, '---');
+
+        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
             const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
             return callback(new Error(msg), false);
         }
-        return callback(null, true);
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true
 };
-
 // Apply CORS middleware. This should be one of the *very first* middleware.
 app.use(cors(corsOptions));
 
