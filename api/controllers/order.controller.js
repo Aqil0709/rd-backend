@@ -223,7 +223,6 @@ const getOrderStatus = async (req, res) => {
 
 // --- THIS FUNCTION IS NOW CORRECTED ---
 const getMyOrders = async (req, res) => {
-    let connection; // Define connection here to be accessible in finally block
     try {
         if (!req.userData || !req.userData.userId) {
             console.error("Authentication error in getMyOrders: User data not found in request token.");
@@ -232,11 +231,8 @@ const getMyOrders = async (req, res) => {
 
         const userId = req.userData.userId;
 
-        // Get a connection from the pool
-        connection = await db.getConnection();
-
-        // Use the connection to query
-        const [orders] = await connection.query(
+        // Use db.query() directly for simple queries
+        const [orders] = await db.query(
             `SELECT
                 o.id, o.user_id, o.total_amount AS total, o.status,
                 o.payment_status AS paymentStatus, o.order_date AS orderDate,
@@ -293,9 +289,6 @@ const getMyOrders = async (req, res) => {
     } catch (error) {
         console.error("CRITICAL Error in getMyOrders controller:", error);
         res.status(500).json({ message: "Internal server error while fetching user's orders." });
-    } finally {
-        // Always release the connection
-        if (connection) connection.release();
     }
 };
 
