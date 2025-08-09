@@ -1,69 +1,49 @@
-// backend/api/orders/order.controller.js
+// backend/api/controllers/order.controller.js
 const db = require('../../config/db');
 const { fetchUserCartDetails } = require('../cart/cart.controller');
 
-// backend/api/orders/order.controller.js
-
 const getAllOrders = async (req, res) => {
     try {
-        // The SQL query is correct
         const [orders] = await db.query(`
-            SELECT 
-                o.id, o.user_id, u.name AS customerName, o.total_amount AS totalAmount,
-                o.status, o.payment_status AS paymentStatus, o.order_date AS orderDate,
-                o.items_details AS itemsDetails,
-                a.name AS shippingName, a.mobile AS shippingMobile, a.pincode AS shippingPincode,
-                a.locality AS shippingLocality, a.address AS shippingAddress,
-                a.city AS shippingCity, a.state AS shippingState, a.address_type AS shippingAddressType
+            SELECT o.id, o.user_id, u.name AS customerName, o.total_amount AS totalAmount,
+                   o.status, o.payment_status AS paymentStatus, o.order_date AS orderDate,
+                   o.items_details AS itemsDetails,
+                   a.name AS shippingName, a.mobile AS shippingMobile, a.pincode AS shippingPincode,
+                   a.locality AS shippingLocality, a.address AS shippingAddress,
+                   a.city AS shippingCity, a.state AS shippingState, a.address_type AS shippingAddressType
             FROM orders o
             JOIN users u ON o.user_id = u.id
             LEFT JOIN addresses a ON o.shipping_address_id = a.id
             ORDER BY o.order_date DESC
         `);
 
-        // This new mapping logic is safer and prevents crashes
         const formattedOrders = orders.map(order => {
-            let parsedItems = [];
             try {
-                // Safely parse items, checking if it's a valid string first
-                if (order.itemsDetails && typeof order.itemsDetails === 'string') {
-                    parsedItems = JSON.parse(order.itemsDetails);
-                }
+                order.items = typeof order.itemsDetails === 'string' ? JSON.parse(order.itemsDetails) : order.itemsDetails;
             } catch (e) {
-                console.error(`Could not parse items_details for order ${order.id}:`, e);
-                // If parsing fails, items will remain an empty array
+                order.items = [];
+                console.error(`Error parsing items_details for order ${order.id}:`, e);
             }
+            delete order.itemsDetails;
 
-            // Create a clean, new object for the response
-            const finalOrder = {
-                id: order.id,
-                user_id: order.user_id,
-                customerName: order.customerName,
-                totalAmount: order.totalAmount,
-                status: order.status,
-                paymentStatus: order.paymentStatus,
-                orderDate: order.orderDate,
-                items: parsedItems,
-                shippingDetails: {
-                    // Use || '' to provide a default empty string if data is null
-                    name: order.shippingName || '',
-                    mobile: order.shippingMobile || '',
-                    pincode: order.shippingPincode || '',
-                    locality: order.shippingLocality || '',
-                    address: order.shippingAddress || '',
-                    city: order.shippingCity || '',
-                    state: order.shippingState || '',
-                    address_type: order.shippingAddressType || ''
-                }
+            order.shippingDetails = {
+                name: order.shippingName,
+                mobile: order.shippingMobile,
+                pincode: order.shippingPincode,
+                locality: order.shippingLocality,
+                address: order.shippingAddress,
+                city: order.shippingCity,
+                state: order.shippingState,
+                address_type: order.shippingAddressType
             };
-            return finalOrder;
+            Object.keys(order.shippingDetails).forEach(key => delete order[`shipping${key.charAt(0).toUpperCase() + key.slice(1)}`]);
+            delete order.shippingAddressType;
+
+            return order;
         });
-
         res.status(200).json(formattedOrders);
-
     } catch (error) {
-        // If the error persists, this log will tell us exactly what's wrong
-        console.error('CRITICAL Error fetching all orders:', error);
+        console.error('Error fetching all orders:', error);
         res.status(500).json({ message: 'Server error while fetching orders.' });
     }
 };
@@ -235,8 +215,6 @@ const getOrderStatus = async (req, res) => {
 
 const getMyOrders = async (req, res) => {
     try {
-        // THIS IS THE FIX:
-        // Safely check if req.userData and req.userData.userId exist.
         if (!req.userData || !req.userData.userId) {
             console.error("Authentication error: User data not found in request token.");
             return res.status(401).json({ message: "Authentication error: User data is missing." });
@@ -259,34 +237,6 @@ const getMyOrders = async (req, res) => {
             [userId]
         );
 
-        const formattedOrders = orders.map(order => {
-            // ... (your existing formatting logic is fine)
-            try {
-                order.items = typeof order.itemsDetails === 'string' ? JSON.parse(order.itemsDetails) : order.itemsDetails;
-            } catch (e) {
-                order.items = [];
-            }
-            delete order.itemsDetails;
-
-            order.shippingDetails = {
-                name: order.shippingName, mobile: order.shippingMobile, pincode: order.shippingPincode,
-                locality: order.shippingLocality, address: order.shippingAddress, city: order.shippingCity,
-                state: order.shippingState, address_type: order.shippingAddressType
-            };
-            // Clean up redundant fields
-            Object.keys(order.shippingDetails).forEach(key => delete order[`shipping${key.charAt(0).toUpperCase() + key.slice(1)}`]);
-            delete order.shippingAddressType;
-
-            return order;
-        });
-
-        res.status(200).json(formattedOrders);
-
-    } catch (error) {
-        console.error("Error in getMyOrders controller:", error);
-        res.status(500).json({ message: "Internal server error while fetching user's orders." });
-    }
-};
         const formattedOrders = orders.map(order => {
             if ((order.paymentStatus === 'Succesfull' || order.paymentStatus === 'Paid') && order.status.toLowerCase() === 'paid') {
                 order.status = 'Processing';
@@ -318,7 +268,6 @@ const getMyOrders = async (req, res) => {
     }
 };
 
-// --- FINAL FIX: Added detailed logging and simplified query ---
 const updateOrderStatus = async (req, res) => {
     console.log('--- UPDATE ORDER STATUS CONTROLLER HIT ---');
     const { orderId } = req.params;
@@ -337,7 +286,6 @@ const updateOrderStatus = async (req, res) => {
 
         const [result] = await db.query(sql, values);
         
-        // This log will show us the raw packet returned by the MySQL server.
         console.log('[DATABASE LOG] Raw result from DB:', JSON.stringify(result, null, 2));
         
         if (result.affectedRows === 0) {
