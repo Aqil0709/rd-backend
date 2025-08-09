@@ -235,11 +235,14 @@ const getOrderStatus = async (req, res) => {
 
 const getMyOrders = async (req, res) => {
     try {
-        const userId = req.userData.userId;
-
-        if (!userId) {
-            return res.status(401).json({ message: "User ID not found in authenticated request." });
+        // THIS IS THE FIX:
+        // Safely check if req.userData and req.userData.userId exist.
+        if (!req.userData || !req.userData.userId) {
+            console.error("Authentication error: User data not found in request token.");
+            return res.status(401).json({ message: "Authentication error: User data is missing." });
         }
+
+        const userId = req.userData.userId;
 
         const [orders] = await db.query(
             `SELECT
@@ -256,6 +259,34 @@ const getMyOrders = async (req, res) => {
             [userId]
         );
 
+        const formattedOrders = orders.map(order => {
+            // ... (your existing formatting logic is fine)
+            try {
+                order.items = typeof order.itemsDetails === 'string' ? JSON.parse(order.itemsDetails) : order.itemsDetails;
+            } catch (e) {
+                order.items = [];
+            }
+            delete order.itemsDetails;
+
+            order.shippingDetails = {
+                name: order.shippingName, mobile: order.shippingMobile, pincode: order.shippingPincode,
+                locality: order.shippingLocality, address: order.shippingAddress, city: order.shippingCity,
+                state: order.shippingState, address_type: order.shippingAddressType
+            };
+            // Clean up redundant fields
+            Object.keys(order.shippingDetails).forEach(key => delete order[`shipping${key.charAt(0).toUpperCase() + key.slice(1)}`]);
+            delete order.shippingAddressType;
+
+            return order;
+        });
+
+        res.status(200).json(formattedOrders);
+
+    } catch (error) {
+        console.error("Error in getMyOrders controller:", error);
+        res.status(500).json({ message: "Internal server error while fetching user's orders." });
+    }
+};
         const formattedOrders = orders.map(order => {
             if ((order.paymentStatus === 'Succesfull' || order.paymentStatus === 'Paid') && order.status.toLowerCase() === 'paid') {
                 order.status = 'Processing';
