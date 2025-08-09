@@ -18,32 +18,40 @@ const getAllOrders = async (req, res) => {
         `);
 
         const formattedOrders = orders.map(order => {
+            let parsedItems = [];
             try {
-                order.items = typeof order.itemsDetails === 'string' ? JSON.parse(order.itemsDetails) : order.itemsDetails;
+                if (order.itemsDetails && typeof order.itemsDetails === 'string') {
+                    parsedItems = JSON.parse(order.itemsDetails);
+                }
             } catch (e) {
-                order.items = [];
-                console.error(`Error parsing items_details for order ${order.id}:`, e);
+                console.error(`Could not parse items_details for order ${order.id}:`, e);
             }
-            delete order.itemsDetails;
 
-            order.shippingDetails = {
-                name: order.shippingName,
-                mobile: order.shippingMobile,
-                pincode: order.shippingPincode,
-                locality: order.shippingLocality,
-                address: order.shippingAddress,
-                city: order.shippingCity,
-                state: order.shippingState,
-                address_type: order.shippingAddressType
+            const finalOrder = {
+                id: order.id,
+                user_id: order.user_id,
+                customerName: order.customerName,
+                totalAmount: order.totalAmount,
+                status: order.status,
+                paymentStatus: order.paymentStatus,
+                orderDate: order.orderDate,
+                items: parsedItems,
+                shippingDetails: {
+                    name: order.shippingName || '',
+                    mobile: order.shippingMobile || '',
+                    pincode: order.shippingPincode || '',
+                    locality: order.shippingLocality || '',
+                    address: order.shippingAddress || '',
+                    city: order.shippingCity || '',
+                    state: order.shippingState || '',
+                    address_type: order.shippingAddressType || ''
+                }
             };
-            Object.keys(order.shippingDetails).forEach(key => delete order[`shipping${key.charAt(0).toUpperCase() + key.slice(1)}`]);
-            delete order.shippingAddressType;
-
-            return order;
+            return finalOrder;
         });
         res.status(200).json(formattedOrders);
     } catch (error) {
-        console.error('Error fetching all orders:', error);
+        console.error('CRITICAL Error fetching all orders:', error);
         res.status(500).json({ message: 'Server error while fetching orders.' });
     }
 };
@@ -213,15 +221,18 @@ const getOrderStatus = async (req, res) => {
     }
 };
 
+// --- THIS FUNCTION IS NOW CORRECTED ---
 const getMyOrders = async (req, res) => {
     try {
+        // 1. Safely check for user data from the authentication middleware
         if (!req.userData || !req.userData.userId) {
-            console.error("Authentication error: User data not found in request token.");
+            console.error("Authentication error in getMyOrders: User data not found in request token.");
             return res.status(401).json({ message: "Authentication error: User data is missing." });
         }
 
         const userId = req.userData.userId;
 
+        // 2. The SQL query remains the same
         const [orders] = await db.query(
             `SELECT
                 o.id, o.user_id, o.total_amount AS total, o.status,
@@ -237,33 +248,49 @@ const getMyOrders = async (req, res) => {
             [userId]
         );
 
+        // 3. Use a safer mapping function to build clean response objects
         const formattedOrders = orders.map(order => {
-            if ((order.paymentStatus === 'Succesfull' || order.paymentStatus === 'Paid') && order.status.toLowerCase() === 'paid') {
-                order.status = 'Processing';
-            }
-
+            let parsedItems = [];
             try {
-                order.items = typeof order.itemsDetails === 'string' ? JSON.parse(order.itemsDetails) : order.itemsDetails;
+                if (order.itemsDetails && typeof order.itemsDetails === 'string') {
+                    parsedItems = JSON.parse(order.itemsDetails);
+                }
             } catch (e) {
-                order.items = [];
-                console.error(`Error parsing items_details for order ${order.id}:`, e);
+                console.error(`Could not parse items_details for order ${order.id}:`, e);
             }
-            delete order.itemsDetails;
 
-            order.shippingDetails = {
-                name: order.shippingName, mobile: order.shippingMobile, pincode: order.shippingPincode,
-                locality: order.shippingLocality, address: order.shippingAddress, city: order.shippingCity,
-                state: order.shippingState, address_type: order.shippingAddressType
+            // Correct the spelling of "Successful"
+            let currentStatus = order.status;
+            if ((order.paymentStatus === 'Successful' || order.paymentStatus === 'Paid') && order.status.toLowerCase() === 'paid') {
+                currentStatus = 'Processing';
+            }
+
+            const finalOrder = {
+                id: order.id,
+                user_id: order.user_id,
+                total: order.total,
+                status: currentStatus,
+                paymentStatus: order.paymentStatus,
+                orderDate: order.orderDate,
+                paymentMethod: order.paymentMethod,
+                items: parsedItems,
+                shippingDetails: {
+                    name: order.shippingName || '',
+                    mobile: order.shippingMobile || '',
+                    pincode: order.shippingPincode || '',
+                    locality: order.shippingLocality || '',
+                    address: order.shippingAddress || '',
+                    city: order.shippingCity || '',
+                    state: order.shippingState || '',
+                    address_type: order.shippingAddressType || ''
+                }
             };
-            Object.keys(order.shippingDetails).forEach(key => delete order[`shipping${key.charAt(0).toUpperCase() + key.slice(1)}`]);
-            delete order.shippingAddressType;
-
-            return order;
+            return finalOrder;
         });
 
         res.status(200).json(formattedOrders);
     } catch (error) {
-        console.error("Error in getMyOrders controller:", error);
+        console.error("CRITICAL Error in getMyOrders controller:", error);
         res.status(500).json({ message: "Internal server error while fetching user's orders." });
     }
 };
