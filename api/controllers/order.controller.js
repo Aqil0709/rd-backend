@@ -5,7 +5,7 @@ const Order = require('../models/order.model'); // Adjust path if necessary
 const User = require('../models/user.model');   // Adjust path if necessary
 const Address = require('../models/address.model'); // Adjust path if necessary
 const Stock = require('../models/stock.model');   // Adjust path if necessary
-const Cart = require('../models/cart.model');     // Adjust path if necessary
+const Cart = require('../models/cartItem.model');     // Adjust path if necessary
 const mongoose = require('mongoose');
 
 // --- Rewritten for Mongoose ---
