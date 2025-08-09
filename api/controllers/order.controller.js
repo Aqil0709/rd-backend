@@ -223,8 +223,8 @@ const getOrderStatus = async (req, res) => {
 
 // --- THIS FUNCTION IS NOW CORRECTED ---
 const getMyOrders = async (req, res) => {
+    let connection; // Define connection here to be accessible in finally block
     try {
-        // 1. Safely check for user data from the authentication middleware
         if (!req.userData || !req.userData.userId) {
             console.error("Authentication error in getMyOrders: User data not found in request token.");
             return res.status(401).json({ message: "Authentication error: User data is missing." });
@@ -232,8 +232,11 @@ const getMyOrders = async (req, res) => {
 
         const userId = req.userData.userId;
 
-        // 2. The SQL query remains the same
-        const [orders] = await db.query(
+        // Get a connection from the pool
+        connection = await db.getConnection();
+
+        // Use the connection to query
+        const [orders] = await connection.query(
             `SELECT
                 o.id, o.user_id, o.total_amount AS total, o.status,
                 o.payment_status AS paymentStatus, o.order_date AS orderDate,
@@ -248,7 +251,6 @@ const getMyOrders = async (req, res) => {
             [userId]
         );
 
-        // 3. Use a safer mapping function to build clean response objects
         const formattedOrders = orders.map(order => {
             let parsedItems = [];
             try {
@@ -259,7 +261,6 @@ const getMyOrders = async (req, res) => {
                 console.error(`Could not parse items_details for order ${order.id}:`, e);
             }
 
-            // Correct the spelling of "Successful"
             let currentStatus = order.status;
             if ((order.paymentStatus === 'Successful' || order.paymentStatus === 'Paid') && order.status.toLowerCase() === 'paid') {
                 currentStatus = 'Processing';
@@ -292,6 +293,9 @@ const getMyOrders = async (req, res) => {
     } catch (error) {
         console.error("CRITICAL Error in getMyOrders controller:", error);
         res.status(500).json({ message: "Internal server error while fetching user's orders." });
+    } finally {
+        // Always release the connection
+        if (connection) connection.release();
     }
 };
 
