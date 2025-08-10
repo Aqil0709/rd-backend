@@ -35,18 +35,20 @@ const createRazorpayOrderController = async (req, res) => {
 
         // This loop ensures products exist and calculates the final server-side total
         for (const item of cart) {
-            const stockItem = await Stock.findOne({ productId: item.productId }).session(session);
+            // Note: We should populate product details to get the name and image
+            const stockItem = await Stock.findOne({ productId: item.productId }).populate('productId').session(session);
             if (!stockItem || stockItem.quantity < item.quantity) {
                 throw new Error(`Insufficient stock for a product in your cart.`);
             }
             // Use the price from the backend to prevent manipulation
-            totalAmount += stockItem.price * item.quantity; 
+            const price = stockItem.productId.price;
+            totalAmount += price * item.quantity; 
             itemsDetails.push({
-                productId: item.productId,
-                productName: stockItem.productName,
+                productId: item.productId._id,
+                productName: stockItem.productId.name,
                 quantity: item.quantity,
-                price: stockItem.price,
-                image: item.images ? item.images[0] : ''
+                price: price,
+                image: item.images ? item.images[0] : (stockItem.productId.images ? stockItem.productId.images[0] : '')
             });
         }
 
@@ -79,9 +81,6 @@ const createRazorpayOrderController = async (req, res) => {
         // 4. Update your local order with the Razorpay order ID
         savedOrder.razorpay_order_id = razorpayOrder.id;
         await savedOrder.save({ session });
-        
-        // At this point, we don't commit the transaction yet.
-        // The stock will be reduced only after successful payment verification.
         
         await session.commitTransaction();
         session.endSession();
@@ -172,32 +171,139 @@ const verifyRazorpayPaymentController = async (req, res) => {
 };
 
 
-// --- (Existing Order Functions - Unchanged) ---
+// --- Get All Orders (For Admin) ---
 const getAllOrders = async (req, res) => {
-    // This function remains the same
+    try {
+        const orders = await Order.find()
+            .populate({ path: 'user_id', select: 'name mobileNumber' }) // Populate user's name and mobile
+            .populate('shipping_address_id') // Populate the full address document
+            .sort({ order_date: -1 });
+
+        res.status(200).json(orders);
+    } catch (error) {
+        console.error('CRITICAL Error fetching all orders:', error);
+        res.status(500).json({ message: 'Server error while fetching orders.' });
+    }
 };
 
+// --- Get Logged-in User's Orders ---
 const getMyOrders = async (req, res) => {
-    // This function remains the same
+    try {
+        if (!req.userData || !req.userData.userId) {
+            return res.status(401).json({ message: "Authentication error: User data is missing." });
+        }
+        const userId = req.userData.userId;
+        const orders = await Order.find({ user_id: userId })
+            .populate('shipping_address_id')
+            .sort({ order_date: -1 });
+
+        res.status(200).json(orders);
+    } catch (error) {
+        console.error("CRITICAL Error in getMyOrders controller:", error);
+        res.status(500).json({ message: "Internal server error while fetching user's orders." });
+    }
 };
 
-const getOrderStatus = async (req, res) => {
-    // This function remains the same
+// --- Get a Single Order by ID ---
+const getOrderById = async (req, res) => {
+    try {
+        const { userId, orderId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(orderId) || !mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ message: 'Invalid Order or User ID format.' });
+        }
+
+        const order = await Order.findOne({ _id: orderId, user_id: userId })
+            .populate('shipping_address_id');
+
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+
+        res.status(200).json(order);
+    } catch (error) {
+        console.error('Error fetching order status:', error);
+        res.status(500).json({ message: 'Server error while fetching order status.' });
+    }
 };
 
+// --- Update Order Status (For Admin) ---
 const updateOrderStatus = async (req, res) => {
-    // This function remains the same
+    try {
+        const { orderId } = req.params;
+        const { status } = req.body;
+
+        if (!status) {
+            return res.status(400).json({ message: 'New status is required.' });
+        }
+
+        const updatedOrder = await Order.findByIdAndUpdate(
+            orderId,
+            { status: status },
+            { new: true } // Returns the updated document
+        );
+
+        if (!updatedOrder) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+
+        res.status(200).json({ message: 'Order status updated successfully.', order: updatedOrder });
+    } catch (error) {
+        console.error('CRITICAL ERROR during order status update:', error);
+        res.status(500).json({ message: 'Server error while updating order status.' });
+    }
 };
 
+// --- Cancel an Order ---
 const cancelOrderController = async (req, res) => {
-    // This function remains the same
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
+        const { orderId } = req.params;
+        const { userId } = req.userData;
+
+        const order = await Order.findOne({ _id: orderId, user_id: userId }).session(session);
+
+        if (!order) {
+            throw new Error('Order not found or you do not have permission to cancel it.');
+        }
+
+        // Allow cancellation only if the order is 'Pending' or 'Processing'
+        if (!['Pending', 'Processing'].includes(order.status)) {
+            throw new Error(`Order cannot be cancelled as it is already ${order.status}.`);
+        }
+
+        order.status = 'Cancelled';
+        order.payment_status = 'Refunded'; // Or 'Cancelled' depending on if payment was captured
+        await order.save({ session });
+
+        // Restore the stock for each item in the cancelled order
+        const items = JSON.parse(order.items_details);
+        for (const item of items) {
+            await Stock.findOneAndUpdate(
+                { productId: item.productId },
+                { $inc: { quantity: item.quantity } },
+                { session }
+            );
+        }
+
+        await session.commitTransaction();
+        session.endSession();
+        res.status(200).json({ message: 'Order has been successfully cancelled.' });
+
+    } catch (error) {
+        await session.abortTransaction();
+        session.endSession();
+        console.error('Error cancelling order:', error);
+        res.status(500).json({ message: error.message || 'Failed to cancel order.' });
+    }
 };
 
 
 module.exports = {
     getAllOrders,
     getMyOrders,
-    getOrderStatus,
+    getOrderById,
     updateOrderStatus,
     cancelOrderController,
     // --- EXPORT THE NEW RAZORPAY CONTROLLERS ---
