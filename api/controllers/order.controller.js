@@ -230,85 +230,6 @@ const getOrderById = async (req, res) => {
 // --- Update Order Status (For Admin) ---
 const updateOrderStatus = async (req, res) => {
     try {
-<<<<<<< HEAD
-        // THIS IS THE FIX:
-        // Safely check if req.userData and req.userData.userId exist.
-        if (!req.userData || !req.userData.userId) {
-            console.error("Authentication error: User data not found in request token.");
-            return res.status(401).json({ message: "Authentication error: User data is missing." });
-        }
-
-        const userId = req.userData.userId;
-
-        const [orders] = await db.query(
-            `SELECT
-                o.id, o.user_id, o.total_amount AS total, o.status,
-                o.payment_status AS paymentStatus, o.order_date AS orderDate,
-                o.items_details AS itemsDetails, o.payment_method AS paymentMethod,
-                sa.name AS shippingName, sa.mobile AS shippingMobile, sa.pincode AS shippingPincode,
-                sa.locality AS shippingLocality, sa.address AS shippingAddress,
-                sa.city AS shippingCity, sa.state AS shippingState, sa.address_type AS shippingAddressType
-             FROM orders o
-             LEFT JOIN addresses sa ON o.shipping_address_id = sa.id
-             WHERE o.user_id = ?
-             ORDER BY o.order_date DESC`,
-            [userId]
-        );
-
-        const formattedOrders = orders.map(order => {
-            // ... (your existing formatting logic is fine)
-            try {
-                order.items = typeof order.itemsDetails === 'string' ? JSON.parse(order.itemsDetails) : order.itemsDetails;
-            } catch (e) {
-                order.items = [];
-            }
-            delete order.itemsDetails;
-
-            order.shippingDetails = {
-                name: order.shippingName, mobile: order.shippingMobile, pincode: order.shippingPincode,
-                locality: order.shippingLocality, address: order.shippingAddress, city: order.shippingCity,
-                state: order.shippingState, address_type: order.shippingAddressType
-            };
-            // Clean up redundant fields
-            Object.keys(order.shippingDetails).forEach(key => delete order[`shipping${key.charAt(0).toUpperCase() + key.slice(1)}`]);
-            delete order.shippingAddressType;
-
-            return order;
-        });
-
-        res.status(200).json(formattedOrders);
-
-    } catch (error) {
-        console.error("Error in getMyOrders controller:", error);
-        res.status(500).json({ message: "Internal server error while fetching user's orders." });
-    }
-};
-
-// --- FINAL FIX: Added detailed logging and simplified query ---
-const updateOrderStatus = async (req, res) => {
-    console.log('--- UPDATE ORDER STATUS CONTROLLER HIT ---');
-    const { orderId } = req.params;
-    const { status } = req.body;
-
-    if (!status) {
-        return res.status(400).json({ message: 'New status is required.' });
-    }
-
-    try {
-        const sql = 'UPDATE orders SET status = ? WHERE id = ?';
-        const values = [status, orderId];
-        
-        console.log(`[DATABASE LOG] Executing query: ${sql}`);
-        console.log('[DATABASE LOG] With values:', values);
-
-        const [result] = await db.query(sql, values);
-        
-        // This log will show us the raw packet returned by the MySQL server.
-        console.log('[DATABASE LOG] Raw result from DB:', JSON.stringify(result, null, 2));
-        
-        if (result.affectedRows === 0) {
-            console.log('[DATABASE LOG] Query ran, but no rows were affected. Order ID might not exist.');
-=======
         const { orderId } = req.params;
         const { status } = req.body;
 
@@ -323,7 +244,6 @@ const updateOrderStatus = async (req, res) => {
         );
 
         if (!updatedOrder) {
->>>>>>> 58ea2ad9f91a3d40751b1a6cc0b673efffda3bca
             return res.status(404).json({ message: 'Order not found.' });
         }
 
