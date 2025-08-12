@@ -26,7 +26,7 @@ const PORT = process.env.PORT || 5002;
 connectDB();
 
 // --- CORS Configuration ---
-const allowedOrigins = [process.env.FRONTEND_URL || 'http://localhost:3000'];
+const allowedOrigins = [process.env.FRONTEND_URL || 'https://rd-genral-store.netlify.app/'];
 const corsOptions = {
     origin: function (origin, callback) {
         if (!origin || allowedOrigins.indexOf(origin) !== -1) {
