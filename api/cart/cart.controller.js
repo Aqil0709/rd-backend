@@ -1,7 +1,7 @@
 // backend/api/controllers/cart.controller.js
 
 const mongoose = require('mongoose');
-const Cart = require('../models/cart.model'); // This is the main Cart model that holds an array of items
+const CartItem = require('../models/cartItem.model'); // Corrected model import
 const Product = require('../models/product.model');
 const Stock = require('../models/stock.model');
 
@@ -9,21 +9,18 @@ const Stock = require('../models/stock.model');
 // --- Helper function to fetch full cart details with product info ---
 const getPopulatedCart = async (userId) => {
     try {
-        const userCart = await Cart.findOne({ userId });
-
-        if (!userCart) {
-            return [];
-        }
+        const rawCartItems = await CartItem.find({ userId: userId }).lean();
 
         const populatedItems = await Promise.all(
-            userCart.items.map(async item => {
+            rawCartItems.map(async item => {
                 const productDetails = await Product.findById(item.productId).lean();
                 
                 if (productDetails) {
                     return {
                         // Merge product details with cart item details
                         ...productDetails,
-                        id: productDetails._id.toString(),
+                        id: productDetails._id.toString(), // The product ID
+                        cartItemId: item._id.toString(), // The ID of the cart item document
                         quantity: item.quantity,
                         originalPrice: item.originalPrice || productDetails.price,
                         price: item.price || productDetails.price,
@@ -67,21 +64,26 @@ const addToCart = async (req, res) => {
         const { id, name, price, originalPrice, images } = req.body;
         const quantity = 1;
 
-        let userCart = await Cart.findOne({ userId });
+        // Find an existing cart item for this product and user
+        let cartItem = await CartItem.findOne({ userId: userId, productId: id });
 
-        if (!userCart) {
-            userCart = new Cart({ userId, items: [] });
-        }
-
-        const existingItemIndex = userCart.items.findIndex(item => item.productId.toString() === id);
-
-        if (existingItemIndex !== -1) {
-            userCart.items[existingItemIndex].quantity += 1;
+        if (cartItem) {
+            // If item exists, increment quantity
+            cartItem.quantity += 1;
+            await cartItem.save();
         } else {
-            userCart.items.push({ productId: id, quantity, price, originalPrice, name, images });
+            // If item does not exist, create a new cart item
+            cartItem = new CartItem({
+                userId: userId,
+                productId: id,
+                quantity: 1,
+                price: price,
+                originalPrice: originalPrice,
+                name: name,
+                images: images
+            });
+            await cartItem.save();
         }
-
-        await userCart.save();
 
         const updatedCartItems = await getPopulatedCart(userId);
         res.status(200).json(updatedCartItems);
@@ -98,18 +100,13 @@ const updateCartItemQuantity = async (req, res) => {
         const { userId, productId } = req.params;
         const { quantity } = req.body;
 
-        const userCart = await Cart.findOne({ userId });
-        if (!userCart) {
-            return res.status(404).json({ message: 'Cart not found.' });
+        const userCartItem = await CartItem.findOne({ userId, productId });
+        if (!userCartItem) {
+            return res.status(404).json({ message: 'Cart item not found.' });
         }
 
-        const item = userCart.items.find(i => i.productId.toString() === productId);
-        if (!item) {
-            return res.status(404).json({ message: 'Product not found in cart.' });
-        }
-
-        item.quantity = quantity;
-        await userCart.save();
+        userCartItem.quantity = quantity;
+        await userCartItem.save();
         
         const updatedCartItems = await getPopulatedCart(userId);
         res.status(200).json(updatedCartItems);
@@ -123,14 +120,11 @@ const updateCartItemQuantity = async (req, res) => {
 const removeFromCart = async (req, res) => {
     try {
         const { userId, productId } = req.params;
-        const userCart = await Cart.findOne({ userId });
+        const result = await CartItem.deleteOne({ userId, productId });
 
-        if (!userCart) {
-            return res.status(404).json({ message: 'Cart not found.' });
+        if (result.deletedCount === 0) {
+            return res.status(404).json({ message: 'Cart item not found or not belonging to user.' });
         }
-
-        userCart.items = userCart.items.filter(item => item.productId.toString() !== productId);
-        await userCart.save();
         
         const updatedCartItems = await getPopulatedCart(userId);
         res.status(200).json(updatedCartItems);
@@ -139,7 +133,6 @@ const removeFromCart = async (req, res) => {
         res.status(500).json({ message: 'Server error while removing from cart.' });
     }
 };
-
 
 module.exports = {
     getCartItems,
