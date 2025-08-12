@@ -1,4 +1,4 @@
-// backend/api/routes/order.routes.js
+// backend/api/orders/order.router.js
 
 const express = require('express');
 const paymentRouter = express.Router();
@@ -21,38 +21,28 @@ const { authenticate, authorizeAdmin } = require('../middleware/auth.middleware'
 
 // =================================================================
 // --- PAYMENT ROUTES ---
-// These will be mounted under the /api/payment prefix in your main server file.
+// These will be mounted under the /payment prefix in your main server file.
 // =================================================================
 
-// @route   POST /api/payment/create-order
-// @desc    Create a Razorpay order
-// @access  Private (User must be logged in)
+// @route   POST /payment/create-order
 paymentRouter.post('/create-order', authenticate, createRazorpayOrderController);
 
-// @route   POST /api/payment/verify-payment
-// @desc    Verify a Razorpay payment after successful completion
-// @access  Private (User must be logged in)
+// @route   POST /payment/verify-payment
 paymentRouter.post('/verify-payment', authenticate, verifyRazorpayPaymentController);
 
 
 // =================================================================
 // --- ORDER MANAGEMENT ROUTES ---
-// These will be mounted under the /api/orders prefix in your main server file.
+// These will be mounted under the /orders prefix in your main server file.
 // =================================================================
 
-// @route   GET /api/orders/my-orders
-// @desc    Get all orders for the currently logged-in user
-// @access  Private
+// @route   GET /orders/my-orders
 orderRouter.get('/my-orders', authenticate, getMyOrders);
 
-// @route   GET /api/orders/:userId/:orderId
-// @desc    Get a specific order by its ID for a specific user
-// @access  Private
+// @route   GET /orders/:userId/:orderId
 orderRouter.get('/:userId/:orderId', authenticate, getOrderById);
 
-// @route   PUT /api/orders/:orderId/cancel
-// @desc    Cancel an order
-// @access  Private
+// @route   PUT /orders/:orderId/cancel
 orderRouter.put('/:orderId/cancel', authenticate, cancelOrderController);
 
 
@@ -60,14 +50,10 @@ orderRouter.put('/:orderId/cancel', authenticate, cancelOrderController);
 // --- ADMIN ONLY ORDER ROUTES ---
 // =================================================================
 
-// @route   GET /api/orders
-// @desc    Get all orders in the system
-// @access  Admin
+// @route   GET /orders
 orderRouter.get('/', authenticate, authorizeAdmin, getAllOrders);
 
-// @route   PUT /api/orders/:orderId/status
-// @desc    Update the status of an order
-// @access  Admin
+// @route   PUT /orders/:orderId/status
 orderRouter.put('/:orderId/status', authenticate, authorizeAdmin, updateOrderStatus);
 
 
