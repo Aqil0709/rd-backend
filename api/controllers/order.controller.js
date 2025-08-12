@@ -19,6 +19,11 @@ const razorpay = new Razorpay({
 
 // --- NEW: Create Razorpay Order Controller ---
 const createRazorpayOrderController = async (req, res) => {
+    // --- NEW DEBUGGING LOGS ---
+    console.log("--- createRazorpayOrderController: Entered function ---");
+    console.log("--- Request Body Received: ---", JSON.stringify(req.body, null, 2));
+    // --- END DEBUGGING LOGS ---
+
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
@@ -29,22 +34,25 @@ const createRazorpayOrderController = async (req, res) => {
             return res.status(400).json({ message: 'Missing required data for creating an order.' });
         }
 
-        // 1. Calculate total amount and prepare item details from the cart
         let totalAmount = 0;
         let itemsDetails = [];
 
-        // This loop ensures products exist and calculates the final server-side total
         for (const item of cart) {
-            // Note: We should populate product details to get the name and image
-            const stockItem = await Stock.findOne({ productId: item.productId }).populate('productId').session(session);
-            if (!stockItem || stockItem.quantity < item.quantity) {
-                throw new Error(`Insufficient stock for a product in your cart.`);
+            // --- FIX: Check for both 'productId' and 'id' from the frontend cart item ---
+            const productId = item.productId || item.id;
+            if (!productId) {
+                throw new Error('Cart item is missing a product ID.');
             }
-            // Use the price from the backend to prevent manipulation
+
+            const stockItem = await Stock.findOne({ productId: productId }).populate('productId').session(session);
+            if (!stockItem || stockItem.quantity < item.quantity) {
+                throw new Error(`Insufficient stock for product: ${stockItem?.productId?.name || 'Unknown Product'}`);
+            }
+            
             const price = stockItem.productId.price;
             totalAmount += price * item.quantity; 
             itemsDetails.push({
-                productId: item.productId._id,
+                productId: stockItem.productId._id,
                 productName: stockItem.productId.name,
                 quantity: item.quantity,
                 price: price,
@@ -52,11 +60,10 @@ const createRazorpayOrderController = async (req, res) => {
             });
         }
 
-        // 2. Create a local order in your database with a "Pending" status
         const newOrder = new Order({
             user_id: userId,
             total_amount: totalAmount,
-            status: 'Pending', // Initial status
+            status: 'Pending',
             payment_status: 'Pending',
             shipping_address_id: deliveryAddressId,
             items_details: JSON.stringify(itemsDetails),
@@ -65,11 +72,10 @@ const createRazorpayOrderController = async (req, res) => {
 
         const savedOrder = await newOrder.save({ session });
 
-        // 3. Create a Razorpay order
         const razorpayOptions = {
-            amount: totalAmount * 100, // Amount in paise
+            amount: totalAmount * 100,
             currency: "INR",
-            receipt: savedOrder._id.toString(), // Use your internal order ID as the receipt
+            receipt: savedOrder._id.toString(),
         };
 
         const razorpayOrder = await razorpay.orders.create(razorpayOptions);
@@ -78,14 +84,12 @@ const createRazorpayOrderController = async (req, res) => {
             throw new Error("Failed to create Razorpay order.");
         }
 
-        // 4. Update your local order with the Razorpay order ID
         savedOrder.razorpay_order_id = razorpayOrder.id;
         await savedOrder.save({ session });
         
         await session.commitTransaction();
         session.endSession();
 
-        // 5. Send the order details to the frontend
         res.status(201).json({
             message: 'Razorpay order created successfully.',
             key_id: process.env.RAZORPAY_KEY_ID,
@@ -99,7 +103,7 @@ const createRazorpayOrderController = async (req, res) => {
     } catch (error) {
         await session.abortTransaction();
         session.endSession();
-        console.error('Error creating Razorpay order:', error);
+        console.error('--- ERROR in createRazorpayOrderController: ---', error);
         res.status(500).json({ message: error.message || 'Server error while creating Razorpay order.' });
     }
 };
