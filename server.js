@@ -1,19 +1,21 @@
+// backend/server.js
+
+// --- FIX: Load environment variables at the absolute top ---
+require('dotenv').config(); 
+
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config(); // Load environment variables from .env file
-
-// --- Mongoose Import and DB Connection Function ---
-const mongoose = require('mongoose'); // Import Mongoose
-const connectDB = require('./config/db'); // Import the centralized DB connection function
-
+const mongoose = require('mongoose');
 const path = require('path');
+
+// --- Import the centralized DB connection function ---
+const connectDB = require('./config/db'); 
 
 // Import route handlers
 const authRoutes = require('./api/auth/auth.routes');
 const cartRoutes = require('./api/cart/cart.routes');
 const profileRoutes = require('./api/profile/profile.routes');
 const productRoutes = require('./api/products/products.routes');
-// --- UPDATED: Import both payment and order routers ---
 const { paymentRouter, orderRouter } = require('./api/orders/order.router'); 
 const stockRoutes = require('./api/stock/stock.routes');
 
@@ -23,34 +25,10 @@ const PORT = process.env.PORT || 5002;
 // --- Initiate MongoDB Connection ---
 connectDB();
 
-mongoose.connection.on('connected', () => {
-    console.log('Mongoose default connection open.');
-});
-
-mongoose.connection.on('error', (err) => {
-    console.error('Mongoose default connection error: ❌', err);
-    process.exit(1);
-});
-
-mongoose.connection.on('disconnected', () => {
-    console.log('Mongoose default connection disconnected');
-});
-
-process.on('SIGINT', () => {
-    mongoose.connection.close(() => {
-        console.log('Mongoose default connection disconnected through app termination');
-        process.exit(0);
-    });
-});
-// --- End MongoDB Connection Configuration ---
-
-
 // --- CORS Configuration ---
 const allowedOrigins = [process.env.FRONTEND_URL || 'http://localhost:3000'];
-
 const corsOptions = {
     origin: function (origin, callback) {
-        console.log('--- INCOMING REQUEST ORIGIN:', origin, '---');
         if (!origin || allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
@@ -70,20 +48,12 @@ app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.use((req, res, next) => {
-    console.log(`[SERVER LOG] Request Received: ${req.method} ${req.originalUrl}`);
-    next();
-});
-
-
 // --- API ROUTES ---
 app.use('/auth', authRoutes);
 app.use('/cart', cartRoutes);
 app.use('/profile', profileRoutes);
 app.use('/products', productRoutes);
 app.use('/stock', stockRoutes);
-
-// --- UPDATED: Mount payment and order routes separately ---
 app.use('/payment', paymentRouter);
 app.use('/orders', orderRouter);
 
