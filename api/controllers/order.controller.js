@@ -1,91 +1,92 @@
 // backend/api/controllers/order.controller.js
 
-// --- IMPORTANT: Import your Mongoose models and required libraries ---
-const Order = require('../models/order.model'); // Adjust path if necessary
-const User = require('../models/user.model');   // Adjust path if necessary
-const Stock = require('../models/stock.model');   // Adjust path if necessary
-const Cart = require('../models/cartItem.model');      // Adjust path if necessary
+const Order = require('../models/order.model');
+const User = require('../models/user.model');
+const Stock = require('../models/stock.model');
+const CartItem = require('../models/cartItem.model'); // Corrected from Cart to CartItem
 const mongoose = require('mongoose');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
-// --- Initialize Razorpay ---
-// This uses the keys from your .env file
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
     key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
-
-// --- NEW: Create Razorpay Order Controller ---
 const createRazorpayOrderController = async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const { deliveryAddressId, cart } = req.body;
+    const userId = req.userData.userId;
+
+    console.log("--- Creating Order: Received Cart from Frontend ---", JSON.stringify(cart, null, 2));
+
+    if (!userId || !deliveryAddressId || !cart || !cart.length) {
+        return res.status(400).json({ message: 'Missing required data for creating an order.' });
+    }
+
+    let totalAmount = 0;
+    let itemsDetails = [];
     try {
-        const { deliveryAddressId, cart, amount } = req.body;
-        const userId = req.userData.userId;
-
-        if (!userId || !deliveryAddressId || !cart || cart.length === 0) {
-            return res.status(400).json({ message: 'Missing required data for creating an order.' });
-        }
-
-        // 1. Calculate total amount and prepare item details from the cart
-        let totalAmount = 0;
-        let itemsDetails = [];
-
-        // This loop ensures products exist and calculates the final server-side total
         for (const item of cart) {
-            // Note: We should populate product details to get the name and image
-            const stockItem = await Stock.findOne({ productId: item.productId }).populate('productId').session(session);
+            console.log(`--- Backend: Querying stock for productId: ${item.productId} ---`); // Diagnostic Log 1
+            const stockItem = await Stock.findOne({ productId: item.productId }).populate('productId');
+            
+            // --- THIS IS THE NEW, CRITICAL LOG ---
+            console.log("--- Backend: Found stockItem from DB ---", stockItem); // Diagnostic Log 2
+
             if (!stockItem || stockItem.quantity < item.quantity) {
-                throw new Error(`Insufficient stock for a product in your cart.`);
+                return res.status(400).json({ message: `Insufficient stock for ${stockItem?.productId?.name || 'a product'}. Available: ${stockItem?.quantity || 0}, Requested: ${item.quantity}.` });
             }
-            // Use the price from the backend to prevent manipulation
+
+            if (!stockItem.productId) {
+                throw new Error(`Product details could not be found for a cart item. Product ID: ${item.productId}.`);
+            }
+
             const price = stockItem.productId.price;
-            totalAmount += price * item.quantity; 
+            totalAmount += parseFloat(price.toString()) * item.quantity;
             itemsDetails.push({
-                productId: item.productId._id,
+                productId: item.productId,
                 productName: stockItem.productId.name,
                 quantity: item.quantity,
-                price: price,
+                price: parseFloat(price.toString()),
                 image: item.images ? item.images[0] : (stockItem.productId.images ? stockItem.productId.images[0] : '')
             });
         }
+    } catch (validationError) {
+        console.error('Error during pre-transaction validation:', validationError);
+        return res.status(500).json({ message: validationError.message || 'Server error during order validation.' });
+    }
 
-        // 2. Create a local order in your database with a "Pending" status
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
         const newOrder = new Order({
             user_id: userId,
             total_amount: totalAmount,
-            status: 'Pending', // Initial status
+            status: 'Pending',
             payment_status: 'Pending',
             shipping_address_id: deliveryAddressId,
             items_details: JSON.stringify(itemsDetails),
             payment_method: 'Razorpay'
         });
-
         const savedOrder = await newOrder.save({ session });
 
-        // 3. Create a Razorpay order
         const razorpayOptions = {
-            amount: totalAmount * 100, // Amount in paise
+            amount: totalAmount * 100,
             currency: "INR",
-            receipt: savedOrder._id.toString(), // Use your internal order ID as the receipt
+            receipt: savedOrder._id.toString(),
         };
-
         const razorpayOrder = await razorpay.orders.create(razorpayOptions);
 
         if (!razorpayOrder) {
             throw new Error("Failed to create Razorpay order.");
         }
 
-        // 4. Update your local order with the Razorpay order ID
         savedOrder.razorpay_order_id = razorpayOrder.id;
         await savedOrder.save({ session });
-        
+
         await session.commitTransaction();
         session.endSession();
 
-        // 5. Send the order details to the frontend
         res.status(201).json({
             message: 'Razorpay order created successfully.',
             key_id: process.env.RAZORPAY_KEY_ID,
@@ -96,15 +97,14 @@ const createRazorpayOrderController = async (req, res) => {
             receipt: savedOrder._id.toString()
         });
 
-    } catch (error) {
+    } catch (transactionError) {
         await session.abortTransaction();
         session.endSession();
-        console.error('Error creating Razorpay order:', error);
-        res.status(500).json({ message: error.message || 'Server error while creating Razorpay order.' });
+        console.error('Error creating Razorpay order within transaction:', transactionError);
+        res.status(500).json({ message: transactionError.message || 'Server error while creating Razorpay order.' });
     }
 };
 
-// --- NEW: Verify Razorpay Payment Controller ---
 const verifyRazorpayPaymentController = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -115,7 +115,6 @@ const verifyRazorpayPaymentController = async (req, res) => {
             return res.status(400).json({ message: 'Missing payment verification details.' });
         }
 
-        // 1. Verify the signature
         const body = razorpay_order_id + "|" + razorpay_payment_id;
         const expectedSignature = crypto
             .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
@@ -126,31 +125,30 @@ const verifyRazorpayPaymentController = async (req, res) => {
             return res.status(400).json({ status: 'failure', message: 'Payment verification failed. Signature mismatch.' });
         }
 
-        // 2. Find the order in your database
         const order = await Order.findOne({ razorpay_order_id }).session(session);
         if (!order) {
             throw new Error('Order not found for this payment.');
         }
 
-        // 3. Update order status and payment details
         order.payment_status = 'Paid';
-        order.status = 'Processing'; // Or 'Confirmed', 'Placed', etc.
+        order.status = 'Processing';
         order.razorpay_payment_id = razorpay_payment_id;
         order.razorpay_signature = razorpay_signature;
 
-        // 4. Reduce stock for each item in the order
         const items = JSON.parse(order.items_details);
         for (const item of items) {
-            const stock = await Stock.findOne({ productId: item.productId }).session(session);
-            if (!stock || stock.quantity < item.quantity) {
+            const stockUpdateResult = await Stock.updateOne(
+                { productId: item.productId, quantity: { $gte: item.quantity } },
+                { $inc: { quantity: -item.quantity } },
+                { session }
+            );
+
+            if (stockUpdateResult.matchedCount === 0) {
                 throw new Error(`Insufficient stock for product "${item.productName}" during final confirmation.`);
             }
-            stock.quantity -= item.quantity;
-            await stock.save({ session });
         }
-        
-        // 5. Clear the user's cart
-        await Cart.updateOne({ userId: order.user_id }, { $set: { items: [] } }).session(session);
+
+        await CartItem.deleteMany({ userId: order.user_id }).session(session);
 
         await order.save({ session });
         await session.commitTransaction();
@@ -171,12 +169,11 @@ const verifyRazorpayPaymentController = async (req, res) => {
 };
 
 
-// --- Get All Orders (For Admin) ---
 const getAllOrders = async (req, res) => {
     try {
         const orders = await Order.find()
-            .populate({ path: 'user_id', select: 'name mobileNumber' }) // Populate user's name and mobile
-            .populate('shipping_address_id') // Populate the full address document
+            .populate({ path: 'user_id', select: 'name mobileNumber' })
+            .populate('shipping_address_id')
             .sort({ order_date: -1 });
 
         res.status(200).json(orders);
@@ -186,7 +183,6 @@ const getAllOrders = async (req, res) => {
     }
 };
 
-// --- Get Logged-in User's Orders ---
 const getMyOrders = async (req, res) => {
     try {
         if (!req.userData || !req.userData.userId) {
@@ -204,7 +200,6 @@ const getMyOrders = async (req, res) => {
     }
 };
 
-// --- Get a Single Order by ID ---
 const getOrderById = async (req, res) => {
     try {
         const { userId, orderId } = req.params;
@@ -227,7 +222,6 @@ const getOrderById = async (req, res) => {
     }
 };
 
-// --- Update Order Status (For Admin) ---
 const updateOrderStatus = async (req, res) => {
     try {
         const { orderId } = req.params;
@@ -240,7 +234,7 @@ const updateOrderStatus = async (req, res) => {
         const updatedOrder = await Order.findByIdAndUpdate(
             orderId,
             { status: status },
-            { new: true } // Returns the updated document
+            { new: true }
         );
 
         if (!updatedOrder) {
@@ -254,7 +248,6 @@ const updateOrderStatus = async (req, res) => {
     }
 };
 
-// --- Cancel an Order ---
 const cancelOrderController = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -268,16 +261,14 @@ const cancelOrderController = async (req, res) => {
             throw new Error('Order not found or you do not have permission to cancel it.');
         }
 
-        // Allow cancellation only if the order is 'Pending' or 'Processing'
         if (!['Pending', 'Processing'].includes(order.status)) {
             throw new Error(`Order cannot be cancelled as it is already ${order.status}.`);
         }
 
         order.status = 'Cancelled';
-        order.payment_status = 'Refunded'; // Or 'Cancelled' depending on if payment was captured
+        order.payment_status = 'Refunded';
         await order.save({ session });
 
-        // Restore the stock for each item in the cancelled order
         const items = JSON.parse(order.items_details);
         for (const item of items) {
             await Stock.findOneAndUpdate(
@@ -306,7 +297,6 @@ module.exports = {
     getOrderById,
     updateOrderStatus,
     cancelOrderController,
-    // --- EXPORT THE NEW RAZORPAY CONTROLLERS ---
     createRazorpayOrderController,
     verifyRazorpayPaymentController
 };

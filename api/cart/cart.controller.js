@@ -65,7 +65,22 @@ const getCart = async (req, res) => {
 // --- Add Product to Cart ---
 const addToCart = async (req, res) => {
     const { userId } = req.params; // userId is now expected to be a MongoDB ObjectId string
-    const { id: productId } = req.body; // productId is also expected to be a MongoDB ObjectId string
+    const { productId } = req.body; // productId is also expected to be a MongoDB ObjectId string
+
+    // --- ENHANCED DIAGNOSTIC LOGS START ---
+    console.log('Backend received userId for addToCart:', userId);
+    console.log('Type of userId:', typeof userId);
+    console.log('Length of userId:', userId ? userId.length : 'N/A');
+    console.log('Does userId have leading/trailing spaces?', userId !== (userId ? userId.trim() : userId));
+
+    console.log('Backend received productId for addToCart:', productId);
+    console.log('Type of productId:', typeof productId);
+    console.log('Length of productId:', productId ? productId.length : 'N/A');
+    console.log('Does productId have leading/trailing spaces?', productId !== (productId ? productId.trim() : productId));
+
+    console.log('Is userId valid ObjectId?', mongoose.Types.ObjectId.isValid(userId));
+    console.log('Is productId valid ObjectId?', mongoose.Types.ObjectId.isValid(productId));
+    // --- ENHANCED DIAGNOSTIC LOGS END ---
 
     // Basic validation for IDs
     if (!mongoose.Types.ObjectId.isValid(userId) || !mongoose.Types.ObjectId.isValid(productId)) { // Requires mongoose import
@@ -100,7 +115,7 @@ const addToCart = async (req, res) => {
 
         // Fetch the updated cart to send back
         const updatedCart = await fetchUserCartDetails(userId);
-        res.status(200).json(updatedCart);
+        res.status(200).json({ cartItems: updatedCart, message: 'Product added to cart successfully!' });
 
     } catch (error) {
         console.error('Add to cart error:', error);

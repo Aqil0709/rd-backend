@@ -44,7 +44,7 @@ const getAllProducts = async (req, res) => {
 
         console.log('Products data sent to frontend (ID, Name, Quantity):');
         parsedProducts.forEach(p => {
-            console.log(`     ID: ${p.id}, Name: ${p.name}, Quantity: ${p.quantity}`);
+            console.log(`    ID: ${p.id}, Name: ${p.name}, Quantity: ${p.quantity}`);
         });
 
         res.status(200).json(parsedProducts);
@@ -96,25 +96,29 @@ const getProductById = async (req, res) => {
 
 // --- ADMIN ONLY ---
 const addProduct = async (req, res) => {
-    const { name, price, originalPrice, quantity, description, category } = req.body;
-
-    if (!req.files || req.files.length === 0) {
-        return res.status(400).json({ message: 'Product images are required.' });
-    }
-    if (!name || !price || !quantity || !description || !category) {
-        // If validation fails, delete the already uploaded files from Cloudinary
-        for (const file of req.files) {
-            await deleteCloudinaryImage(file.path); // file.path is the URL from Cloudinary
-        }
-        return res.status(400).json({ message: 'Name, price, quantity, description, and category are required.' });
-    }
-
-    // Get the secure URLs from the Cloudinary upload response
-    const imageURLs = req.files.map(file => file.path);
-
+    const session = await mongoose.startSession();
+    session.startTransaction();
     let newProductDoc;
+    let imageURLs = [];
 
     try {
+        const { name, price, originalPrice, quantity, description, category } = req.body;
+
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ message: 'Product images are required.' });
+        }
+        if (!name || !price || quantity === undefined || !description || !category) {
+            // If validation fails, delete the already uploaded files from Cloudinary
+            for (const file of req.files) {
+                await deleteCloudinaryImage(file.path); // file.path is the URL from Cloudinary
+            }
+            return res.status(400).json({ message: 'Name, price, quantity, description, and category are required.' });
+        }
+
+        // Get the secure URLs from the Cloudinary upload response
+        imageURLs = req.files.map(file => file.path);
+
+        // 1. Create the new Product document
         newProductDoc = new Product({
             name,
             description,
@@ -123,17 +127,23 @@ const addProduct = async (req, res) => {
             images: imageURLs,
             category,
         });
-        await newProductDoc.save();
+        await newProductDoc.save({ session }); // Save product within the transaction
 
+        // 2. Create the corresponding Stock document
         const newStockDoc = new Stock({
             productId: newProductDoc._id,
             productName: name,
             quantity: parseInt(quantity, 10)
         });
-        await newStockDoc.save();
+        await newStockDoc.save({ session }); // Save stock within the transaction
 
+        // 3. Link the Stock ID back to the Product document
         newProductDoc.stockId = newStockDoc._id;
-        await newProductDoc.save();
+        await newProductDoc.save({ session }); // Update product within the transaction
+
+        // Commit the transaction if all operations succeed
+        await session.commitTransaction();
+        session.endSession();
 
         const newProductResponse = {
             id: newProductDoc._id,
@@ -144,65 +154,63 @@ const addProduct = async (req, res) => {
             images: newProductDoc.images,
             imageUrl: newProductDoc.images[0] || '',
             category: newProductDoc.category,
-            quantity: newStockDoc.quantity
+            quantity: newStockDoc.quantity // Include the stored quantity in the response
         };
 
         res.status(201).json(newProductResponse);
 
     } catch (error) {
+        // Abort transaction if any error occurs
+        await session.abortTransaction();
+        session.endSession();
         console.error('Add product error:', error);
         // Clean up uploaded files from Cloudinary if there's a database error
         for (const url of imageURLs) {
-            await deleteCloudinaryImage(url);
+            await deleteCloudinaryImage(url).catch(console.error); // Add catch for delete
         }
-        if (newProductDoc && newProductDoc._id) {
-            await Product.deleteOne({ _id: newProductDoc._id }).catch(console.error);
-            await Stock.deleteOne({ productId: newProductDoc._id }).catch(console.error);
-        }
+        // No need to delete Product/Stock if transaction is aborted, as they won't be saved
         res.status(500).json({ message: 'Server error while adding product.' });
     }
 };
 
 const updateProduct = async (req, res) => {
-    const { productId } = req.params;
-    const { name, price, originalPrice, quantity, description, category, currentImageUrlsToRetain } = req.body;
-
-    if (!mongoose.Types.ObjectId.isValid(productId)) {
-        return res.status(400).json({ message: 'Invalid Product ID format.' });
-    }
-
+    const session = await mongoose.startSession();
+    session.startTransaction();
     let finalImageURLs = [];
+    let oldImageURLs = []; // Define here to ensure it's accessible in catch block
 
     try {
-        const currentProduct = await Product.findById(productId);
-        if (!currentProduct) {
-            return res.status(404).json({ message: 'Product not found for update.' });
+        const { productId } = req.params;
+        const { name, price, originalPrice, quantity, description, category, currentImageUrlsToRetain } = req.body;
+
+        if (!mongoose.Types.ObjectId.isValid(productId)) {
+            return res.status(400).json({ message: 'Invalid Product ID format.' });
         }
-        const oldImageURLs = currentProduct.images || [];
+
+        const currentProduct = await Product.findById(productId).session(session); // Fetch within transaction
+        if (!currentProduct) {
+            throw new Error('Product not found for update.'); // Throw error to abort transaction
+        }
+        oldImageURLs = currentProduct.images || [];
 
         if (req.files && req.files.length > 0) {
-            // New files were uploaded, they replace the old ones
             finalImageURLs = req.files.map(file => file.path);
-            // Delete all old images from Cloudinary
             for (const url of oldImageURLs) {
-                await deleteCloudinaryImage(url);
+                await deleteCloudinaryImage(url).catch(console.error);
             }
         } else if (currentImageUrlsToRetain) {
-            // No new files, but a list of old URLs to keep was sent
             const retainedUrls = JSON.parse(currentImageUrlsToRetain);
             finalImageURLs = retainedUrls;
-            // Delete only the URLs that are not in the retained list
             const urlsToDelete = oldImageURLs.filter(url => !retainedUrls.includes(url));
             for (const url of urlsToDelete) {
-                await deleteCloudinaryImage(url);
+                await deleteCloudinaryImage(url).catch(console.error);
             }
         } else {
-            // No new files and no retention list, keep the old images
             finalImageURLs = oldImageURLs;
         }
 
         if (finalImageURLs.length === 0) {
-            return res.status(400).json({ message: 'At least one product image is required.' });
+            throw new Error('At least one product image is required.');
         }
 
         // Update Product in DB
@@ -215,14 +223,20 @@ const updateProduct = async (req, res) => {
                 images: finalImageURLs,
                 originalPrice: originalPrice ? parseFloat(originalPrice) : null,
                 category
-            }
+            },
+            { session } // Update within the transaction
         );
 
         // Update Stock in DB
         await Stock.updateOne(
             { productId: productId },
-            { quantity: parseInt(quantity, 10), productName: name }
+            { quantity: parseInt(quantity, 10), productName: name },
+            { session, upsert: true } // Update/create stock within the transaction
         );
+
+        // Commit the transaction
+        await session.commitTransaction();
+        session.endSession();
 
         const updatedProductResponse = {
             id: productId,
@@ -239,46 +253,58 @@ const updateProduct = async (req, res) => {
         res.status(200).json(updatedProductResponse);
 
     } catch (error) {
+        // Abort transaction if any error occurs
+        await session.abortTransaction();
+        session.endSession();
         console.error('Update product error:', error);
-        // If the DB update fails, clean up any newly uploaded Cloudinary files
+        // Clean up newly uploaded Cloudinary files if DB update fails (and they weren't original)
         if (req.files && req.files.length > 0) {
             for (const file of req.files) {
-                await deleteCloudinaryImage(file.path);
+                await deleteCloudinaryImage(file.path).catch(console.error);
             }
         }
-        res.status(500).json({ message: 'Server error while updating product.' });
+        res.status(500).json({ message: error.message || 'Server error while updating product.' });
     }
 };
 
 const deleteProduct = async (req, res) => {
-    const { productId } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(productId)) {
-        return res.status(400).json({ message: 'Invalid Product ID format.' });
-    }
-
+    const session = await mongoose.startSession();
+    session.startTransaction();
     try {
-        const productToDelete = await Product.findById(productId);
+        const { productId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(productId)) {
+            return res.status(400).json({ message: 'Invalid Product ID format.' });
+        }
+
+        const productToDelete = await Product.findById(productId).session(session);
         if (!productToDelete) {
-            return res.status(404).json({ message: 'Product not found.' });
+            throw new Error('Product not found.');
         }
 
         // Delete all associated images from Cloudinary
         if (productToDelete.images && productToDelete.images.length > 0) {
             for (const url of productToDelete.images) {
-                await deleteCloudinaryImage(url);
+                await deleteCloudinaryImage(url).catch(console.error);
             }
         }
 
-        // Delete from stock and product collections
-        await Stock.deleteOne({ productId: productId });
-        await Product.deleteOne({ _id: productId });
+        // Delete from stock and product collections within transaction
+        await Stock.deleteOne({ productId: productId }).session(session);
+        await Product.deleteOne({ _id: productId }).session(session);
+
+        // Commit the transaction
+        await session.commitTransaction();
+        session.endSession();
 
         res.status(200).json({ message: 'Product deleted successfully.' });
 
     } catch (error) {
+        // Abort transaction if any error occurs
+        await session.abortTransaction();
+        session.endSession();
         console.error('Delete product error:', error);
-        res.status(500).json({ message: 'Server error while deleting product.' });
+        res.status(500).json({ message: error.message || 'Server error while deleting product.' });
     }
 };
 

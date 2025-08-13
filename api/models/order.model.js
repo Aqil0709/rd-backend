@@ -24,8 +24,9 @@ const orderSchema = new Schema({
     status: {
         type: String,
         required: true,
-        default: 'Processing',
-        enum: ['Processing', 'Shipped', 'Delivered', 'Cancelled', 'Paid', 'Failed'] // Defines allowed values
+        // --- FIX: Added 'Pending' to the list of allowed values ---
+        enum: ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled', 'Paid', 'Failed'], // Defines allowed values
+        default: 'Pending',
     },
     // The payment status of the order
     payment_status: {
@@ -37,7 +38,8 @@ const orderSchema = new Schema({
     payment_method: {
         type: String,
         required: true,
-        enum: ['COD', 'UPI'] // Cash on Delivery or UPI
+        // --- FIX: Added 'Razorpay' to the list of allowed values ---
+        enum: ['COD', 'UPI', 'Razorpay'] // Cash on Delivery, UPI, or Razorpay
     },
     // A JSON string containing details of the items in the order
     items_details: {
@@ -49,8 +51,16 @@ const orderSchema = new Schema({
         type: Date,
         default: Date.now
     },
-    // Optional field for UPI transaction reference
-    transaction_ref: {
+    // Razorpay specific fields
+    razorpay_order_id: {
+        type: String,
+        default: null
+    },
+    razorpay_payment_id: {
+        type: String,
+        default: null
+    },
+    razorpay_signature: {
         type: String,
         default: null
     }

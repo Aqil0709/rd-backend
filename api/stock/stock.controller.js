@@ -14,7 +14,7 @@ const getAllStock = async (req, res) => {
         // Map the stock data to a cleaner format if necessary,
         // though Mongoose's .lean() already gives plain objects.
         const parsedStock = stock.map(s => ({
-            id: s._id, // Mongoose document ID
+            id: s.productId, // Use the actual product ID for consistency
             productId: s.productId, // Reference to Product's _id
             productName: s.productName,
             quantity: s.quantity,
@@ -28,55 +28,55 @@ const getAllStock = async (req, res) => {
     }
 };
 
-// Function to add new stock for a product
+// Function to add new stock for a product or increment if exists
 const addStock = async (req, res) => {
-    // --- DEBUG LOGS START ---
     console.log("Backend: addStock received request body:", req.body);
-    // --- DEBUG LOGS END ---
-
     const { productId, productName, quantity } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(productId)) {
         return res.status(400).json({ message: 'Invalid Product ID format.' });
     }
 
-    if (!productId || !productName || quantity === undefined || quantity < 0) {
-        // --- DEBUG LOGS START ---
+    const parsedQuantity = parseInt(quantity, 10);
+
+    if (!productId || !productName || isNaN(parsedQuantity) || parsedQuantity < 0) {
         console.log("Backend: addStock validation failed.");
-        console.log("   productId:", productId, " (Type:", typeof productId, ")");
-        console.log("   productName:", productName, " (Type:", typeof productName, ")");
-        console.log("   quantity:", quantity, " (Type:", typeof quantity, ")");
-        // --- DEBUG LOGS END ---
-        return res.status(400).json({ message: 'Product ID, product name, and a valid quantity are required.' });
+        return res.status(400).json({ message: 'Product ID, product name, and a valid non-negative quantity are required.' });
     }
 
     try {
-        // First, check if the product_id actually exists in the products table
+        // First, check if the product_id actually exists in the products collection
         const productExists = await Product.findById(productId);
         if (!productExists) {
             return res.status(400).json({ message: 'Product ID does not exist in the products collection. Please add the product first.' });
         }
 
         // Check if a stock entry for this product already exists
-        const existingStock = await Stock.findOne({ productId: productId });
+        let existingStock = await Stock.findOne({ productId: productId });
 
         if (existingStock) {
-            // If stock already exists, it's an update operation, not an add.
-            return res.status(409).json({ message: 'Stock for this product already exists. Use PUT to update it.' });
+            // If stock exists, update its quantity (increment)
+            existingStock.quantity += parsedQuantity; // Increment stock
+            await existingStock.save();
+            return res.status(200).json({ message: 'Stock quantity updated successfully!', stock: existingStock.toObject() });
+        } else {
+            // If stock entry doesn't exist, create it
+            const newStock = new Stock({
+                productId: productId,
+                productName: productName,
+                quantity: parsedQuantity
+            });
+            await newStock.save();
+
+            // Link the new stock record back to the product
+            await Product.findByIdAndUpdate(productId, { stockId: newStock._id });
+
+            return res.status(201).json({ message: 'Stock added successfully!', stock: newStock.toObject() });
         }
 
-        // If stock entry doesn't exist, create it
-        const newStock = new Stock({
-            productId: productId,
-            productName: productName,
-            quantity: parseInt(quantity, 10)
-        });
-        await newStock.save();
-        res.status(201).json({ message: 'Stock added successfully!', stock: newStock.toObject() });
-
     } catch (error) {
-        console.error('Error adding stock:', error);
-        res.status(500).json({ message: 'Server error while adding stock.' });
+        console.error('Error adding/updating stock:', error);
+        res.status(500).json({ message: 'Server error while adding/updating stock.' });
     }
 };
 
@@ -90,32 +90,36 @@ const updateProductStock = async (req, res) => {
         return res.status(400).json({ message: 'Invalid Product ID format.' });
     }
 
-    if (quantity === undefined || quantity < 0) {
+    const parsedQuantity = parseInt(quantity, 10);
+
+    if (isNaN(parsedQuantity) || parsedQuantity < 0) {
         return res.status(400).json({ message: 'Invalid quantity provided. Quantity must be a non-negative number.' });
     }
 
     try {
         // Build update fields dynamically
-        const updateFields = { quantity: parseInt(quantity, 10) };
+        const updateFields = { quantity: parsedQuantity };
+        // Only update productName if provided in the body (it's optional for updates)
         if (productName !== undefined) {
             updateFields.productName = productName;
         }
 
         // Find and update the stock entry
-        const result = await Stock.updateOne(
+        const updatedStock = await Stock.findOneAndUpdate(
             { productId: productId },
-            { $set: updateFields }
+            { $set: updateFields },
+            { new: true, upsert: true, runValidators: true }
         );
 
-        if (result.matchedCount === 0) {
-            // If stock entry doesn't exist, it's an add operation, not an update.
-            return res.status(404).json({ message: 'Stock for this product not found. Use POST to add new stock.' });
-        }
-        if (result.modifiedCount === 0) {
-            return res.status(200).json({ message: 'Stock updated successfully (no changes made).' });
-        }
+        if (updatedStock) {
+            // --- THIS IS THE FIX ---
+            // Ensure the main product document is linked to this stock record.
+            await Product.findByIdAndUpdate(productId, { stockId: updatedStock._id });
 
-        res.status(200).json({ message: 'Stock updated successfully.' });
+            res.status(200).json({ message: 'Stock updated/created successfully.', stock: updatedStock.toObject() });
+        } else {
+            res.status(404).json({ message: 'Stock for this product could not be found or updated.' });
+        }
 
     } catch (error) {
         console.error('Error updating product stock:', error);
