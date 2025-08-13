@@ -1,17 +1,9 @@
 // backend/api/controllers/order.controller.js
 
-<<<<<<< HEAD
 const Order = require('../models/order.model');
 const User = require('../models/user.model');
 const Stock = require('../models/stock.model');
-const CartItem = require('../models/cartItem.model'); // Corrected from Cart to CartItem
-=======
-// --- IMPORTANT: Import your Mongoose models and required libraries ---
-const Order = require('../models/order.model'); // Adjust path if necessary
-const User = require('../models/user.model');    // Adjust path if necessary
-const Stock = require('../models/stock.model');    // Adjust path if necessary
-const Cart = require('../models/cartItem.model');      // Adjust path if necessary
->>>>>>> 9ba6b503cbfd7ac83684feda9cc2165cc3c4806e
+const CartItem = require('../models/cartItem.model');
 const mongoose = require('mongoose');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
@@ -22,7 +14,6 @@ const razorpay = new Razorpay({
 });
 
 const createRazorpayOrderController = async (req, res) => {
-<<<<<<< HEAD
     const { deliveryAddressId, cart } = req.body;
     const userId = req.userData.userId;
 
@@ -36,11 +27,10 @@ const createRazorpayOrderController = async (req, res) => {
     let itemsDetails = [];
     try {
         for (const item of cart) {
-            console.log(`--- Backend: Querying stock for productId: ${item.productId} ---`); // Diagnostic Log 1
+            console.log(`--- Backend: Querying stock for productId: ${item.productId} ---`);
             const stockItem = await Stock.findOne({ productId: item.productId }).populate('productId');
             
-            // --- THIS IS THE NEW, CRITICAL LOG ---
-            console.log("--- Backend: Found stockItem from DB ---", stockItem); // Diagnostic Log 2
+            console.log("--- Backend: Found stockItem from DB ---", stockItem);
 
             if (!stockItem || stockItem.quantity < item.quantity) {
                 return res.status(400).json({ message: `Insufficient stock for ${stockItem?.productId?.name || 'a product'}. Available: ${stockItem?.quantity || 0}, Requested: ${item.quantity}.` });
@@ -54,50 +44,6 @@ const createRazorpayOrderController = async (req, res) => {
             totalAmount += parseFloat(price.toString()) * item.quantity;
             itemsDetails.push({
                 productId: item.productId,
-=======
-    console.log("--- createRazorpayOrderController: Entered function ---");
-    console.log("--- Request Body Received: ---", JSON.stringify(req.body, null, 2));
-
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    try {
-        // Destructure the fields you need
-        const { deliveryAddressId, cart } = req.body;
-        const userId = req.userData.userId;
-
-        // Critical validation check
-        if (!userId || !deliveryAddressId || !cart || cart.length === 0) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(400).json({ message: 'Missing required data for creating an order.' });
-        }
-
-        let totalAmount = 0;
-        let itemsDetails = [];
-
-        for (const item of cart) {
-            // FIX: Changed from `item.id` to `item.productId` to match the frontend body
-            const productId = item.productId;
-            if (!productId) {
-                throw new Error('Cart item is missing a product ID.');
-            }
-
-            // Populate the product details directly from the Stock model
-            const stockItem = await Stock.findOne({ productId: productId }).populate('productId').session(session);
-
-            if (!stockItem) {
-                throw new Error(`Product with ID ${productId} not found in stock.`);
-            }
-            if (stockItem.quantity < item.quantity) {
-                throw new Error(`Insufficient stock for product: ${stockItem.productId.name || 'Unknown Product'}`);
-            }
-            
-            const price = stockItem.productId.price;
-            totalAmount += price * item.quantity; 
-            
-            itemsDetails.push({
-                productId: stockItem.productId._id,
->>>>>>> 9ba6b503cbfd7ac83684feda9cc2165cc3c4806e
                 productName: stockItem.productId.name,
                 quantity: item.quantity,
                 price: parseFloat(price.toString()),
@@ -109,13 +55,9 @@ const createRazorpayOrderController = async (req, res) => {
         return res.status(500).json({ message: validationError.message || 'Server error during order validation.' });
     }
 
-<<<<<<< HEAD
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
-=======
-        // Create a new order document
->>>>>>> 9ba6b503cbfd7ac83684feda9cc2165cc3c4806e
         const newOrder = new Order({
             user_id: userId,
             total_amount: totalAmount,
@@ -127,24 +69,12 @@ const createRazorpayOrderController = async (req, res) => {
         });
         const savedOrder = await newOrder.save({ session });
 
-<<<<<<< HEAD
         const razorpayOptions = {
-            amount: totalAmount * 100,
-=======
-        // Double check the amount before sending to Razorpay
-        if (totalAmount <= 0) {
-            throw new Error("Order amount must be greater than zero.");
-        }
-        
-        // Create Razorpay order
-        const razorpayOptions = {
-            amount: Math.round(totalAmount * 100), // Convert to paise and round to nearest integer
->>>>>>> 9ba6b503cbfd7ac83684feda9cc2165cc3c4806e
+            amount: Math.round(totalAmount * 100), // Convert to paise and round
             currency: "INR",
             receipt: savedOrder._id.toString(),
         };
         const razorpayOrder = await razorpay.orders.create(razorpayOptions);
-        console.log("Razorpay Order Created: ", razorpayOrder);
 
         if (!razorpayOrder) {
             throw new Error("Failed to create Razorpay order.");
@@ -169,13 +99,8 @@ const createRazorpayOrderController = async (req, res) => {
     } catch (transactionError) {
         await session.abortTransaction();
         session.endSession();
-<<<<<<< HEAD
         console.error('Error creating Razorpay order within transaction:', transactionError);
         res.status(500).json({ message: transactionError.message || 'Server error while creating Razorpay order.' });
-=======
-        console.error('--- CRITICAL ERROR in createRazorpayOrderController: ---', error.message);
-        res.status(500).json({ message: error.message || 'Server error while creating Razorpay order.' });
->>>>>>> 9ba6b503cbfd7ac83684feda9cc2165cc3c4806e
     }
 };
 
