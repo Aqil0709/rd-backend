@@ -46,12 +46,9 @@ process.on('SIGINT', () => {
 
 
 // --- CORS Configuration ---
-<<<<<<< HEAD
-const allowedOrigins = [process.env.FRONTEND_URL || 'http://localhost:3000'];
 
-=======
+
 const allowedOrigins = [process.env.FRONTEND_URL || 'https://rd-genral-store.netlify.app/'];
->>>>>>> 9ba6b503cbfd7ac83684feda9cc2165cc3c4806e
 const corsOptions = {
     origin: function (origin, callback) {
         console.log('--- INCOMING REQUEST ORIGIN:', origin, '---');
